@@ -1,0 +1,360 @@
+---
+title: "Code used for LSM3241 Assignment 1 (Scenario 2)"
+subtitle: by Chloe and Xinyi
+output:
+  pdf_document:
+    toc: yes
+  html_notebook:
+    toc: yes
+---
+
+# 1 Setup
+
+## 1.1 Install Packages
+```{r}
+install_and_lib <- function(package) {
+  if (!requireNamespace(package, quietly=TRUE))
+    install.packages(package)
+  library(package,character.only=TRUE)
+}
+
+bioc_install <- function(package) {
+  if (!requireNamespace(package, quietly = TRUE))
+    BiocManager::install(package)
+}
+
+bioc_install_and_lib <- function(package) {
+  bioc_install(package)
+  library(package, character.only = TRUE)
+}
+
+install_and_lib('BiocManager')
+bioc_install_and_lib('GEOquery')
+bioc_install_and_lib('oligo')
+bioc_install_and_lib('limma')
+bioc_install_and_lib('mta10transcriptcluster.db')
+bioc_install_and_lib('mta10probeset.db')
+bioc_install_and_lib('org.Mm.eg.db')
+bioc_install_and_lib('GOfuncR')
+
+install_and_lib('RColorBrewer')
+
+source('boxplot_expr.R') # Contains helper function boxplot_probes() to boxplot expression of specified probes
+```
+
+## 1.2 Download CEL files (takes a long time, only run if needed)
+```{r}
+# filePaths <- getGEOSuppFiles('GSE124483') 
+```
+
+# 2 Read raw data
+
+```{r}
+gse <- getGEO('GSE124483',GSEMatrix=FALSE)
+```
+
+## 2.2 Phenodata
+```{r}
+make_phenodata <- function(gse) {
+  genotype <- function(gsm) { 
+    Meta(gsm)[['characteristics_ch1']][2]
+  }
+
+  age <- function(gsm) { 
+    Meta(gsm)[['characteristics_ch1']][3]
+  }
+  
+  pd <- data.frame(genotype=as.factor(sapply(GSMList(gse),genotype)),age=as.factor(sapply(GSMList(gse),age)))
+  levels(pd$genotype) <- c("KO","WT")
+  levels(pd$age) <- c("old","young")
+  
+  # Add treat column
+  pd$treat <- paste(pd$genotype, pd$age,sep='_')
+  pd$treat <- as.factor(pd$treat)
+  
+  pd
+}
+
+pd <- make_phenodata(gse)
+pd
+```
+
+## 2.3 Affydata
+```{r}
+make_affydata <- function(phenodata) {
+  celfiles<-paste0('GSE124483/',affy::list.celfiles('GSE124483'))
+  affydata <- read.celfiles(celfiles,phenoData=new("AnnotatedDataFrame",phenodata))
+  affydata
+}
+
+affydata <- make_affydata(pd)
+affydata
+```
+
+## 2.4 Eset
+```{r}
+eset <- oligo::rma(affydata)
+eset
+```
+
+# 3 Build Model
+The aim here is to build an empirical Bayes model for each contrast, which will then be used to identify differentially expressed ttable
+```{r}
+model <- model.matrix(~0+eset$treat)
+colnames(model) <- levels(eset$treat)
+model
+```
+
+
+## 3.1 Contrasts
+```{r}
+contrast.names <- c(
+  '(A) Effect of genotype (old mice)',
+  '(B) Effect of genotype (young mice)',
+  'Effect of age (WT mice)',
+  'Effect of age (KO mice)',
+  '(C) Effect of genotype',
+  'Effect of age',
+  '(D) Interaction term: difference in effect of age in WT vs KO mice'
+)
+
+contrast.i.geno.o <- 1
+contrast.i.geno.y <- 2
+contrast.i.age.wt <- 3
+contrast.i.age.ko <- 4
+contrast.i.geno <- 5
+contrast.i.age <- 6
+contrast.i.interaction <- 7
+
+contrasts <-makeContrasts(
+  KO_old - WT_old, # A
+  KO_young - WT_young, # B
+  WT_old - WT_young,
+  KO_old - KO_young, 
+  (KO_old - WT_old) + (KO_young - WT_young), # C - effect of genotype
+  (KO_old - KO_young) + (WT_old - WT_young), # effect of age
+  (WT_old - WT_young) - (KO_old - KO_young), # D - interaction term - difference in effect of age in different genotypes
+  levels = model) 
+```
+
+## 3.2 Model fitting
+```{r}
+fit <- lmFit(eset, model) #MArrayLM (linear model)
+fitted.contrast <- contrasts.fit(fit, contrasts) # another MArrayLM
+fitted.ebayes <- eBayes(fitted.contrast) # contrast model
+```
+
+# 4 Miscellaneous Analysis
+## 4.1 Comparison of raw vs adjusted p-values
+```{r}
+for (i in 1:7) {
+  table <- topTable(fitted.ebayes,coef = i,number=Inf, adjust.method = 'holm')
+  name <- contrast.names[i]
+  plot(main = name, x=table$P.Value, y=table$adj.P.Val,xlab='Raw p-value', ylab='BH adjusted p-value',ylim=c(0,1))
+}
+```
+
+# 5 Results
+## 5.1 Identifying differentially expressed genes
+
+Identifying differentially expressed genes for contrasts a,b,c and d respectively
+```{r}
+ttable.a <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.geno.o, lfc = 1, p.value = 0.05)
+ttable.b <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.geno.y, lfc = 1, p.value = 0.05)
+ttable.c <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.geno, lfc = 1, p.value = 0.05)
+ttable.d <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.interaction, lfc = 1, p.value = 0.05)
+
+# Adds a column mapping probe id to entrez id to a toptable
+add_entrez_col <- function (ttable) {
+  ttable$ENTREZID <- AnnotationDbi::mapIds(mta10transcriptcluster.db,keys=rownames(ttable),keytype = 'PROBEID', column = 'ENTREZID')
+  ttable[complete.cases(ttable$ENTREZID),]
+}
+
+ttable.a <- add_entrez_col(ttable.a)
+ttable.b <- add_entrez_col(ttable.b)
+ttable.c <- add_entrez_col(ttable.c)
+ttable.d <- add_entrez_col(ttable.d)
+
+# Adds a column mapping describing whether gene is positively or negatively regulated (in KO mice) to a toptable
+add_updown_col <- function (ttable){
+  ttable$CHANGE <- sapply(ttable$logFC, function(x){if (x>0) {return('+')} else {return('-')}})
+  ttable
+}
+
+ttable.a <- add_updown_col(ttable.a)
+ttable.b <- add_updown_col(ttable.b)
+ttable.c <- add_updown_col(ttable.c)
+ttable.d <- add_updown_col(ttable.d)
+
+```
+
+```{r}
+ttable.a
+ttable.b
+ttable.c
+ttable.d
+```
+### 5.1.1 Generate table for report
+```{r}
+# Sort toptable by magnitude of log fold
+sort_ttable <- function(ttable) {
+  ttable[order(-abs(ttable$logFC)),]
+}
+
+table_for_report <- function(ttable) {
+  n_total <- nrow(ttable)
+  n_down <- nrow(subset(ttable,logFC<0))
+  cat('Number of downregulated genes: ', n_down,'. ', sep = '')
+  cat('Number of upregulated genes: ', n_total-n_down,'.\n', sep = '')
+  tbl <- ttable#head(ttable,n=10)
+  tbl$PROBEID <- rownames(tbl)
+  tbl <- tbl[c('PROBEID','ENTREZID','CHANGE','logFC','P.Value')]
+  rownames(tbl) <- 1:nrow(tbl)
+  tbl
+}
+
+table_for_report(sort_ttable(ttable.a))
+```
+
+## 5.2 Annotating differentially expressed genes
+### 5.2.1 Obtaining a list of Entrez gene IDs to input to DAVID
+```{r}
+entrez_david <- function(ttable) {
+  cat(unique(ttable$ENTREZID),sep='\n')
+}
+
+entrez_david(ttable.a)
+entrez_david(ttable.b)
+entrez_david(ttable.c)
+entrez_david(ttable.d)
+```
+
+### 5.2.2 View all significant DAVID results
+```{r}
+for (f in paste0('david/',list.files('david'))) {
+  print(f)
+  df <- read.csv(f,sep='\t',stringsAsFactors = F)
+  rownames(df) <- 1:nrow(df)
+  show(df[c('Term','Genes','PValue')])
+}
+```
+### 5.2.3 Save GO/KEGG results to a dataframe
+```{r}
+# GO results
+davidgo.a <- read.csv('david/contrast-a-go.tsv',sep='\t',stringsAsFactors = F) # contrast A
+davidgo.c <- read.csv('david/contrast-c-go.tsv',sep='\t',stringsAsFactors = F) # contrast C
+davidgo.d <- read.csv('david/contrast-d-go.tsv',sep='\t',stringsAsFactors = F) # contrast D
+
+# KEGG results
+davidkegg.a <- read.csv('david/contrast-a-kegg.tsv',sep='\t',stringsAsFactors = F) # contrast A
+davidkegg.c <- read.csv('david/contrast-c-kegg.tsv',sep='\t',stringsAsFactors = F) # contrast C
+davidkegg.d <- read.csv('david/contrast-d-kegg.tsv',sep='\t',stringsAsFactors = F) # contrast D
+```
+
+### 5.2.4 Pick GO terms/KEGG pathways related to the cardiovascular health
+
+Pick terms containing any the following key terms: heart, cardio, cardiac, vascular system, blood pressure, blood vessel, angiogenesis
+```{r}
+# function which returns TRUE if a string that has any key words related to the cardiovascular system
+is_cardiovascular_string <- function(str){
+  keywords <- c('heart', 'cardio', 'cardiac', 'vascular', 'blood pressure', 'blood vessel', 'angiogenesis')
+  any(sapply(keywords,function(kw){ grepl(kw, str, fixed=TRUE)} ))
+}
+```
+
+```{r}
+davidgo.a[sapply(davidgo.a$Term,is_cardiovascular_string),][c('Term','Genes','PValue')]
+davidgo.c[sapply(davidgo.c$Term,is_cardiovascular_string),][c('Term','Genes','PValue')]
+davidgo.d[sapply(davidgo.d$Term,is_cardiovascular_string),][c('Term','Genes','PValue')]
+
+davidkegg.a[sapply(davidkegg.a$Term,is_cardiovascular_string),]
+davidkegg.c[sapply(davidkegg.c$Term,is_cardiovascular_string),]
+davidkegg.d[sapply(davidkegg.d$Term,is_cardiovascular_string),]
+```
+
+### 5.2.5 Identify more specific child GOs for GO terms related to cardiovascular health
+```{r}
+get_child_gos <- function(entrez_ids,go_ids) {
+  childgo <- get_child_nodes(go_ids, term_df = NULL, graph_path_df = NULL, godir = NULL) # Get child terms of go_ids + their descriptions 
+  
+  # Get all known GO terms for each gene
+  annot_table <- AnnotationDbi::select(org.Mm.eg.db,keytype='ENTREZID',columns = c('GO'), key=entrez_ids)
+  
+  # Keep only the child GO terms
+  annot_table <- annot_table[which(annot_table$GO %in% childgo$child_go_id),]
+  
+  # Create dataframe mapping child GO id -> description
+  gos <- unique(childgo$child_go_id)
+  childgo_map <- data.frame(description=character(length(gos)),row.names=gos,stringsAsFactors = F)
+  for (i in 1:nrow(childgo)) {
+    go <- childgo$child_go_id[i]
+    description <- childgo$child_name[i]
+    childgo_map[go,] <- description
+  }
+  
+  # Add a column with the GO description, for the child GOs of the interesting genes
+  annot_table$GO_Description <- sapply(annot_table$GO,function(go){childgo_map[go,]})
+
+  annot_table[order(annot_table$ENTREZID,annot_table$GO),] # Group the same genes together
+}
+```
+
+Contrast A
+```{r}
+get_child_gos(as.character(c(18158, 230899)), c('GO:0061049','GO:0007507','GO:0060452','GO:0014898','GO:0050880','GO:0030220'))
+```
+Contrast C
+```{r}
+get_child_gos(as.character(c(56376,18158,230899,20807,68927,19084, 68465,320878,20672,15519,230899)),c('GO:0061049','GO:0007507','GO:0060452','GO:0014898','GO:0050880','GO:0030220'))
+```
+
+Contrast D
+```{r}
+get_child_gos(as.character(c(21825, 12826)),c('GO:0048514','GO:0016525'))
+```
+
+## 5.3 Heatmap of significant genes
+```{r}
+eset_of_interest1 <- eset[rownames(interesting_genes1),]
+eset_of_interest2 <- eset[rownames(interesting_genes2),]
+eset_of_interest3 <- eset[rownames(interesting_genes3),]
+eset_of_interest4 <- eset[rownames(interesting_genes4),]
+eset_of_interest5 <- eset[rownames(interesting_genes5),]
+eset_of_interest6 <- eset[rownames(interesting_genes6),]
+eset_of_interest7 <- eset[rownames(interesting_genes7),]
+
+heatmap(exprs(eset_of_interest1),
+        labCol = eset$treat,
+        col       = rev(brewer.pal(10, "RdBu")),
+        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in old mice)")
+
+heatmap(exprs(eset_of_interest2),
+        labCol = eset$treat,
+        col       = rev(brewer.pal(10, "RdBu")),
+        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in old mice)")
+
+#heatmap(exprs(eset_of_interest3),
+#        labCol = eset$treat,
+#        col       = rev(brewer.pal(10, "RdBu")),
+#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of interest")
+#heatmap(exprs(eset_of_interest4),
+#        labCol = eset$treat,
+#        col       = rev(brewer.pal(10, "RdBu")),
+#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of interest")
+
+heatmap(exprs(eset_of_interest5),
+        labCol = eset$treat,
+        col       = rev(brewer.pal(10, "RdBu")),
+        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in both age groups)")
+
+#heatmap(exprs(eset_of_interest6),
+#       labCol = eset$treat,
+#        col       = rev(brewer.pal(10, "RdBu")),
+#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of #interest (contrast)")
+
+heatmap(exprs(eset_of_interest7),
+        labCol = eset$treat,
+        col       = rev(brewer.pal(10, "RdBu")),
+        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of interaction between genotype and age)")
+```
+
