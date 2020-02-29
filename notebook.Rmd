@@ -1,12 +1,11 @@
 ---
-title: "Code used for LSM3241 Assignment 1 (Scenario 1)"
-subtitle: by Chloe and Xinyi
+title: "Appendix: R code used for analysis"
+subtitle: LSM3241 Assignment 1 (scenario 1) - by Chloe and Xinyi
 output:
   html_notebook:
     toc: yes
-  pdf_document:
-    toc: yes
 ---
+Source code (including the R notebook for this page) can be found at: https://github.com/chloelee767/lsm3241-assignment-1-submission/
 
 # 1 Setup
 
@@ -33,7 +32,6 @@ bioc_install_and_lib('GEOquery')
 bioc_install_and_lib('oligo')
 bioc_install_and_lib('limma')
 bioc_install_and_lib('mta10transcriptcluster.db')
-bioc_install_and_lib('mta10probeset.db')
 bioc_install_and_lib('org.Mm.eg.db')
 bioc_install_and_lib('GOfuncR')
 
@@ -108,16 +106,20 @@ model
 
 ## 3.1 Contrasts
 ```{r}
-contrast.names <- c(
-  '(A) Effect of genotype (old mice)',
-  '(B) Effect of genotype (young mice)',
-  'Effect of age (WT mice)',
-  'Effect of age (KO mice)',
-  '(C) Effect of genotype',
-  'Effect of age',
-  '(D) Interaction term: difference in effect of age in WT vs KO mice'
-)
+contrasts <-makeContrasts(
+  KO_old - WT_old, # A
+  KO_young - WT_young, # B
+  WT_old - WT_young,
+  KO_old - KO_young, 
+  (KO_old - WT_old) + (KO_young - WT_young), # C - effect of genotype
+  (KO_old - KO_young) + (WT_old - WT_young), 
+  (WT_old - WT_young) - (KO_old - KO_young), # D - interaction term - difference in effect of age in different genotypes
+  levels = model) 
+```
+```{r}
+# Contrast labels for convenience
 
+## Coefficients
 contrast.i.geno.o <- 1
 contrast.i.geno.y <- 2
 contrast.i.age.wt <- 3
@@ -131,21 +133,24 @@ contrast.i.b <- contrast.i.geno.y
 contrast.i.c <- contrast.i.geno
 contrast.i.d <- contrast.i.interaction
 
+## Descriptions
+contrast.names <- c(
+  '(A) Effect of genotype (old mice)',
+  '(B) Effect of genotype (young mice)',
+  'Effect of age (WT mice)',
+  'Effect of age (KO mice)',
+  '(C) Effect of genotype',
+  'Effect of age',
+  '(D) Interaction term: difference in effect of age in WT vs KO mice'
+)
+
 contrast.name.a <- contrast.names[contrast.i.a]
 contrast.name.b <- contrast.names[contrast.i.b]
 contrast.name.c <- contrast.names[contrast.i.c]
 contrast.name.d <- contrast.names[contrast.i.d]
-
-contrasts <-makeContrasts(
-  KO_old - WT_old, # A
-  KO_young - WT_young, # B
-  WT_old - WT_young,
-  KO_old - KO_young, 
-  (KO_old - WT_old) + (KO_young - WT_young), # C - effect of genotype
-  (KO_old - KO_young) + (WT_old - WT_young), # effect of age
-  (WT_old - WT_young) - (KO_old - KO_young), # D - interaction term - difference in effect of age in different genotypes
-  levels = model) 
 ```
+
+
 
 ## 3.2 Model fitting
 ```{r}
@@ -158,7 +163,7 @@ fitted.ebayes <- eBayes(fitted.contrast) # contrast model
 ## 4.1 Comparison of raw vs adjusted p-values
 ```{r}
 for (i in 1:7) {
-  table <- topTable(fitted.ebayes,coef = i,number=Inf, adjust.method = 'holm')
+  table <- topTable(fitted.ebayes,coef = i,number=Inf)
   name <- contrast.names[i]
   plot(main = name, x=table$P.Value, y=table$adj.P.Val,xlab='Raw p-value', ylab='BH adjusted p-value',ylim=c(0,1))
 }
@@ -200,12 +205,13 @@ ttable.d <- add_updown_col(ttable.d)
 ```
 
 ```{r}
-ttable.a
-ttable.b
-ttable.c
-ttable.d
+#ttable.a
+#ttable.b
+#ttable.c 
+#ttable.d
 ```
-### 5.1.1 Generate table for report
+
+### 5.1.1 Toptables
 ```{r}
 # Sort toptable by magnitude of log fold
 sort_ttable <- function(ttable) {
@@ -223,15 +229,37 @@ table_for_report <- function(ttable) {
   rownames(tbl) <- 1:nrow(tbl)
   tbl
 }
-
-table_for_report(sort_ttable(ttable.a))
 ```
+
+```{r}
+table_for_report(sort_ttable(ttable.a))
+table_for_report(sort_ttable(ttable.b))
+table_for_report(sort_ttable(ttable.c))
+table_for_report(sort_ttable(ttable.d))
+```
+
+### 5.2.2 Volcano plot highligting differentially expressed genes
+```{r}
+volcanoplot_interesting <- function(contrast_model, ttable, coef) {
+  volcanoplot(contrast_model, coef = coef, style="p-value",  main=sprintf("Effect of genotype in old mice: %d features pass our cutoffs",nrow(ttable)))
+  points(ttable[,'logFC'],-log10(ttable[,'P.Value']),col='red')
+}
+```
+```{r}
+volcanoplot_interesting(fitted.ebayes, ttable.a, coef = contrast.i.a)
+volcanoplot_interesting(fitted.ebayes, ttable.b, coef = contrast.i.b)
+volcanoplot_interesting(fitted.ebayes, ttable.c, coef = contrast.i.c)
+volcanoplot_interesting(fitted.ebayes, ttable.d, coef = contrast.i.d)
+```
+
 
 ## 5.2 Annotating differentially expressed genes
 ### 5.2.1 Obtaining a list of Entrez gene IDs to input to DAVID
 ```{r}
 entrez_david <- function(ttable) {
-  cat(unique(ttable$ENTREZID),sep='\n')
+  ids <- unique(ttable$ENTREZID)
+  cat('Number of unique IDs:', length(ids),'\n')
+  cat(ids,sep='\n')
 }
 
 entrez_david(ttable.a)
@@ -264,9 +292,9 @@ davidkegg.d <- read.csv('david/contrast-d-kegg.tsv',sep='\t',stringsAsFactors = 
 
 ### 5.2.4 Pick GO terms/KEGG pathways related to the cardiovascular health
 
-Pick terms containing any the following key terms: heart, cardio, cardiac, vascular system, blood pressure, blood vessel, angiogenesis
+Selection criteria used is that the description of the GO/KEGG term must contain at least 1 of the following words: heart, cardio, cardiac, vascular system, blood pressure, blood vessel, angiogenesis
 ```{r}
-# function which returns TRUE if a string that has any key words related to the cardiovascular system
+# function which returns TRUE if a string that has any words related to the cardiovascular system
 is_cardiovascular_string <- function(str){
   keywords <- c('heart', 'cardio', 'cardiac', 'vascular', 'blood pressure', 'blood vessel', 'angiogenesis')
   any(sapply(keywords,function(kw){ grepl(kw, str, fixed=TRUE)} ))
@@ -289,7 +317,7 @@ get_child_gos <- function(entrez_ids,go_ids) {
   childgo <- get_child_nodes(go_ids, term_df = NULL, graph_path_df = NULL, godir = NULL) # Get child terms of go_ids + their descriptions 
   
   # Get all known GO terms for each gene
-  annot_table <- AnnotationDbi::select(org.Mm.eg.db,keytype='ENTREZID',columns = c('GO'), key=entrez_ids)
+  annot_table <- AnnotationDbi::select(org.Mm.eg.db,keytype='ENTREZID',columns = c('SYMBOL','GO'), key=entrez_ids)
   
   # Keep only the child GO terms
   annot_table <- annot_table[which(annot_table$GO %in% childgo$child_go_id),]
@@ -305,7 +333,7 @@ get_child_gos <- function(entrez_ids,go_ids) {
   
   # Add a column with the GO description, for the child GOs of the interesting genes
   annot_table$GO_Description <- sapply(annot_table$GO,function(go){childgo_map[go,]})
-
+  
   annot_table[order(annot_table$ENTREZID,annot_table$GO),] # Group the same genes together
 }
 ```
@@ -324,7 +352,7 @@ Contrast D
 get_child_gos(as.character(c(21825, 12826)),c('GO:0048514','GO:0016525'))
 ```
 
-## 5.3 Heatmap of significant genes
+## 5.3 Heatmap of differentially expressed genes for each contrast
 ```{r}
 plot_heatmap <- function(eset_of_interest, title) {
   heatmap(exprs(eset_of_interest),
@@ -339,4 +367,13 @@ plot_heatmap(eset[rownames(ttable.b),],contrast.name.b)
 plot_heatmap(eset[rownames(ttable.c),],contrast.name.c)
 plot_heatmap(eset[rownames(ttable.d),],contrast.name.d)
 ```
+## 5.4 Boxplot of nppa and nppb from contrast a
+```{r}
+# NPPB
+boxplot_probes('TC0400001921.mm.1',eset)
+
+# NPPA
+boxplot_probes('TC0400001922.mm.1',eset)
+```
+
 
