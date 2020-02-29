@@ -1,5 +1,5 @@
 ---
-title: "Code used for LSM3241 Assignment 1 (Scenario 2)"
+title: "Code used for LSM3241 Assignment 1 (Scenario 1)"
 subtitle: by Chloe and Xinyi
 output:
   html_notebook:
