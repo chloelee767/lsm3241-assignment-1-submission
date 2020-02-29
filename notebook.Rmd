@@ -126,6 +126,16 @@ contrast.i.geno <- 5
 contrast.i.age <- 6
 contrast.i.interaction <- 7
 
+contrast.i.a <- contrast.i.geno.o
+contrast.i.b <- contrast.i.geno.y
+contrast.i.c <- contrast.i.geno
+contrast.i.d <- contrast.i.interaction
+
+contrast.name.a <- contrast.names[contrast.i.a]
+contrast.name.b <- contrast.names[contrast.i.b]
+contrast.name.c <- contrast.names[contrast.i.c]
+contrast.name.d <- contrast.names[contrast.i.d]
+
 contrasts <-makeContrasts(
   KO_old - WT_old, # A
   KO_young - WT_young, # B
@@ -164,10 +174,11 @@ ttable.b <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = c
 ttable.c <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.geno, lfc = 1, p.value = 0.05)
 ttable.d <- topTable(fitted.ebayes, number=Inf, adjust.method = 'none', coef = contrast.i.interaction, lfc = 1, p.value = 0.05)
 
-# Adds a column mapping probe id to entrez id to a toptable
+# Adds a column mapping probe id to entrez id to a toptable, and remove probes without an entrez id
 add_entrez_col <- function (ttable) {
   ttable$ENTREZID <- AnnotationDbi::mapIds(mta10transcriptcluster.db,keys=rownames(ttable),keytype = 'PROBEID', column = 'ENTREZID')
-  ttable[complete.cases(ttable$ENTREZID),]
+  ttable <- ttable[complete.cases(ttable$ENTREZID),]
+  ttable
 }
 
 ttable.a <- add_entrez_col(ttable.a)
@@ -315,46 +326,17 @@ get_child_gos(as.character(c(21825, 12826)),c('GO:0048514','GO:0016525'))
 
 ## 5.3 Heatmap of significant genes
 ```{r}
-eset_of_interest1 <- eset[rownames(interesting_genes1),]
-eset_of_interest2 <- eset[rownames(interesting_genes2),]
-eset_of_interest3 <- eset[rownames(interesting_genes3),]
-eset_of_interest4 <- eset[rownames(interesting_genes4),]
-eset_of_interest5 <- eset[rownames(interesting_genes5),]
-eset_of_interest6 <- eset[rownames(interesting_genes6),]
-eset_of_interest7 <- eset[rownames(interesting_genes7),]
-
-heatmap(exprs(eset_of_interest1),
-        labCol = eset$treat,
+plot_heatmap <- function(eset_of_interest, title) {
+  heatmap(exprs(eset_of_interest),
+        labCol = eset_of_interest$treat,
         col       = rev(brewer.pal(10, "RdBu")),
-        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in old mice)")
+        distfun   = function(x) as.dist(1-cor(t(x))),main=title)
+}
 
-heatmap(exprs(eset_of_interest2),
-        labCol = eset$treat,
-        col       = rev(brewer.pal(10, "RdBu")),
-        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in old mice)")
 
-#heatmap(exprs(eset_of_interest3),
-#        labCol = eset$treat,
-#        col       = rev(brewer.pal(10, "RdBu")),
-#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of interest")
-#heatmap(exprs(eset_of_interest4),
-#        labCol = eset$treat,
-#        col       = rev(brewer.pal(10, "RdBu")),
-#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of interest")
-
-heatmap(exprs(eset_of_interest5),
-        labCol = eset$treat,
-        col       = rev(brewer.pal(10, "RdBu")),
-        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of genotype in both age groups)")
-
-#heatmap(exprs(eset_of_interest6),
-#       labCol = eset$treat,
-#        col       = rev(brewer.pal(10, "RdBu")),
-#        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map for genes of #interest (contrast)")
-
-heatmap(exprs(eset_of_interest7),
-        labCol = eset$treat,
-        col       = rev(brewer.pal(10, "RdBu")),
-        distfun   = function(x) as.dist(1-cor(t(x))),main="heat map(Effect of interaction between genotype and age)")
+plot_heatmap(eset[rownames(ttable.a),],contrast.name.a)
+plot_heatmap(eset[rownames(ttable.b),],contrast.name.b)
+plot_heatmap(eset[rownames(ttable.c),],contrast.name.c)
+plot_heatmap(eset[rownames(ttable.d),],contrast.name.d)
 ```
 
