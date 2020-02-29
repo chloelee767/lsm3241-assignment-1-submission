@@ -2,9 +2,9 @@
 title: "Code used for LSM3241 Assignment 1 (Scenario 2)"
 subtitle: by Chloe and Xinyi
 output:
-  pdf_document:
-    toc: yes
   html_notebook:
+    toc: yes
+  pdf_document:
     toc: yes
 ---
 
